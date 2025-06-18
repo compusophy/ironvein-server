@@ -425,20 +425,24 @@ async fn websocket_connection(socket: WebSocket, state: AppState, room: String) 
                                     room: room.clone(),
                                 };
                                 
-                                // Save to database
-                                let _ = sqlx::query(
-                                    "INSERT INTO messages (id, username, message, room, timestamp) VALUES ($1, $2, $3, $4, $5)"
-                                )
-                                .bind(&chat_message.id)
-                                .bind(&chat_message.username)
-                                .bind(&chat_message.message)
-                                .bind(&chat_message.room)
-                                .bind(&chat_message.timestamp)
-                                .execute(&db)
-                                .await;
+                                // Broadcast message IMMEDIATELY for low latency
+                                let _ = chat_tx.send(chat_message.clone());
                                 
-                                // Broadcast message
-                                let _ = chat_tx.send(chat_message);
+                                // Save to database ASYNC (non-blocking)
+                                let db_clone = db.clone();
+                                let chat_msg_clone = chat_message.clone();
+                                tokio::spawn(async move {
+                                    let _ = sqlx::query(
+                                        "INSERT INTO messages (id, username, message, room, timestamp) VALUES ($1, $2, $3, $4, $5)"
+                                    )
+                                    .bind(&chat_msg_clone.id)
+                                    .bind(&chat_msg_clone.username)
+                                    .bind(&chat_msg_clone.message)
+                                    .bind(&chat_msg_clone.room)
+                                    .bind(&chat_msg_clone.timestamp)
+                                    .execute(&db_clone)
+                                    .await;
+                                });
                             }
                             
                             _ => {
